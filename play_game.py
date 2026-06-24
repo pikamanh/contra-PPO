@@ -1,5 +1,14 @@
-from Contra.env_contra import ContraEnv
+from nes_py.nes_env import NESEnv
 
-env = ContraEnv()
-env.play()
-env.close()
+env = NESEnv("Contra/ROMs/contra.nes")
+print(env.action_space)
+# observation = env.reset()
+# terminated = False
+# truncated = False
+
+# while not (terminated or truncated):
+#     action = env.action_space.sample()
+#     observation, reward, done, info = env.step(action)
+#     frame = env.render()
+
+# env.close()
