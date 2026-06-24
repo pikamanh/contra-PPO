@@ -36,9 +36,11 @@ _ENEMY_TYPE_ADDRS    = list(range(0x0528, 0x0532))   # 0x0528 – 0x0531
 _STAGE_OVER_ENEMIES  = np.array([0x2D, 0x31])
 # ---------------------------------------------------------------------------
 
-# Frames to hold / release START on reset to skip the title / attract screen
-_START_HOLD    = 90
-_START_RELEASE = 30
+# Konami logo plays for ~180 frames before title screen appears.
+# We must wait it out before pressing START, otherwise START is ignored.
+_LOGO_WAIT     = 300   # NOOP until title screen is visible
+_START_HOLD    = 60    # hold START to begin 1-player game
+_START_RELEASE = 90    # NOOP to let the game fully initialize
 
 
 def _bcd2(byte: int) -> int:
@@ -83,11 +85,13 @@ class ContraEnv(NESEnv):
     # ------------------------------------------------------------------
 
     def _did_reset(self):
-        """Skip attract screen, then snapshot initial RAM state."""
+        """Wait past Konami logo, press START on title screen, snapshot RAM."""
+        for _ in range(_LOGO_WAIT):
+            self._frame_advance(0)
         for _ in range(_START_HOLD):
-            self._frame_advance(8)   # hold START (bitmask bit 3)
+            self._frame_advance(8)   # START bitmask
         for _ in range(_START_RELEASE):
-            self._frame_advance(0)   # release all buttons
+            self._frame_advance(0)
 
         self._prev_score = self._read_score()
         self._prev_lives = int(self.ram[_RAM_P1_LIVES])

@@ -18,17 +18,17 @@ Run:
 """
 import argparse
 import os
-import warnings
-
-# Suppress noisy deprecation warnings from nes_py using old gym
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
+import numpy as np
+from gymnasium.wrappers import TimeLimit
 
 from stable_baselines3 import PPO
+
+# 4500 agent-steps × frame_skip(4) / 60fps ≈ 5 phút game time tối đa/episode
+MAX_EPISODE_STEPS = 4500
 from stable_baselines3.common.vec_env import (
     SubprocVecEnv, VecFrameStack, VecMonitor, VecTransposeImage,
 )
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.utils import set_random_seed
 
 from Contra.wrappers import ContraGymnasiumEnv
@@ -45,7 +45,10 @@ os.makedirs(BEST_MODEL_DIR, exist_ok=True)
 def make_env(rank: int, seed: int = 0):
     """Factory: each worker gets its own env + deterministic seed."""
     def _init():
+        import warnings
+        warnings.filterwarnings("ignore")
         env = ContraGymnasiumEnv(frame_skip=4)
+        env = TimeLimit(env, max_episode_steps=MAX_EPISODE_STEPS)
         env.reset(seed=seed + rank)
         return env
     set_random_seed(seed)
@@ -73,7 +76,7 @@ def build_model(vec_env):
         gae_lambda      = 0.95,     # GAE smoothing
         clip_range      = 0.1,      # PPO clip epsilon
         # ── regularisation ────────────────────────────────────────────
-        ent_coef        = 0.01,     # entropy bonus → encourages exploration
+        ent_coef        = 0.05,     # entropy bonus — cao hơn để chống entropy collapse giai đoạn đầu
         vf_coef         = 0.5,      # value-function loss weight
         max_grad_norm   = 0.5,      # gradient clipping
         # ── logging ───────────────────────────────────────────────────
@@ -82,23 +85,51 @@ def build_model(vec_env):
     )
 
 
-def build_callbacks(n_envs: int, eval_env):
+class SaveBestCallback(BaseCallback):
+    """
+    Save best model based on mean episode reward from the training buffer.
+
+    SB3 keeps a rolling buffer (ep_info_buffer) of the last 100 completed
+    episodes across all envs. We read it every `check_freq` steps and save
+    when the mean reward improves — no separate eval env needed.
+
+    Metric: mean of ep_info_buffer["r"]  (same as rollout/ep_rew_mean in TB)
+    """
+
+    def __init__(self, save_path: str, check_freq: int, verbose: int = 1):
+        super().__init__(verbose)
+        self.save_path       = save_path
+        self.check_freq      = check_freq
+        self.best_mean_reward = -np.inf
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.check_freq != 0:
+            return True
+        if len(self.model.ep_info_buffer) == 0:
+            return True
+
+        mean_reward = np.mean([ep["r"] for ep in self.model.ep_info_buffer])
+        if mean_reward > self.best_mean_reward:
+            self.best_mean_reward = mean_reward
+            self.model.save(os.path.join(self.save_path, "contra_ppo_best"))
+            if self.verbose:
+                print(f"[best] New best mean reward: {mean_reward:.2f} → saved")
+        return True
+
+
+def build_callbacks(n_envs: int):
     checkpoint_cb = CheckpointCallback(
         save_freq   = max(100_000 // n_envs, 1),   # every ~100K total steps
         save_path   = CHECKPOINT_DIR,
         name_prefix = "contra_ppo",
         verbose     = 1,
     )
-    eval_cb = EvalCallback(
-        eval_env,
-        best_model_save_path = BEST_MODEL_DIR,
-        log_path             = LOG_DIR,
-        eval_freq            = max(50_000 // n_envs, 1),
-        n_eval_episodes      = 3,
-        deterministic        = True,
-        verbose              = 1,
+    best_cb = SaveBestCallback(
+        save_path  = BEST_MODEL_DIR,
+        check_freq = max(50_000 // n_envs, 1),     # check every ~50K total steps
+        verbose    = 1,
     )
-    return [checkpoint_cb, eval_cb]
+    return [checkpoint_cb, best_cb]
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────
@@ -119,7 +150,6 @@ def main():
     print(f"[train] envs={args.envs}  total_steps={args.steps:,}  seed={args.seed}")
 
     train_env = build_vec_env(args.envs, args.seed)
-    eval_env  = build_vec_env(1, args.seed + 1000)
 
     if args.resume:
         print(f"[train] Resuming from {args.resume}")
@@ -127,7 +157,7 @@ def main():
     else:
         model = build_model(train_env)
 
-    callbacks = build_callbacks(args.envs, eval_env)
+    callbacks = build_callbacks(args.envs)
 
     model.learn(
         total_timesteps     = args.steps,
@@ -141,7 +171,6 @@ def main():
     print("[train] Done — model saved to checkpoints/contra_ppo_final.zip")
 
     train_env.close()
-    eval_env.close()
 
 
 if __name__ == "__main__":
