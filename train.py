@@ -48,7 +48,7 @@ def make_env(rank: int, seed: int = 0):
         import warnings
         warnings.filterwarnings("ignore")
         env = ContraGymnasiumEnv(frame_skip=4)
-        env = TimeLimit(env, max_episode_steps=MAX_EPISODE_STEPS)
+        # env = TimeLimit(env, max_episode_steps=MAX_EPISODE_STEPS)
         env.reset(seed=seed + rank)
         return env
     set_random_seed(seed)
@@ -67,11 +67,11 @@ def build_model(vec_env):
     lr              = 1e-4    # learning rate
     gamma           = 0.9     # discount factor
     tau             = 1.0     # GAE lambda
-    beta            = 0.01    # entropy coefficient
+    beta            = 0.02    # entropy coefficient
     epsilon         = 0.2     # PPO clip range
     batch_size      = 128     # minibatch size
     num_epochs      = 10      # passes over rollout buffer
-    num_local_steps = 128     # rollout steps per env
+    num_local_steps = 512     # rollout steps per env
 
     return PPO(
         policy          = "CnnPolicy",

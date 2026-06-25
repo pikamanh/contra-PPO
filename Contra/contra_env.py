@@ -112,7 +112,7 @@ class ContraEnv(NESEnv):
         x_now     = self._read_x()
         level_now = int(self.ram[_RAM_LEVEL])
 
-        progress_reward = float(np.clip(x_now - self._prev_x - 0.01, -3, 3))
+        progress_reward = float(np.clip(x_now - self._prev_x - 0.1, -3, 3))
         score_reward    = float(np.clip(score_now - self._prev_score, 0, 2))
         life_penalty    = -15.0 if lives_now < self._prev_lives else 0.0
 
@@ -123,7 +123,7 @@ class ContraEnv(NESEnv):
         else:
             terminal_reward = 0.0
 
-        return progress_reward + score_reward + life_penalty + terminal_reward
+        return (progress_reward + score_reward + life_penalty + terminal_reward) / 10
 
     def _get_done(self):
         """Episode ends when the game-over flag is set."""
