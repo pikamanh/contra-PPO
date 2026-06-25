@@ -64,22 +64,28 @@ def build_vec_env(n_envs: int, seed: int = 0):
 
 
 def build_model(vec_env):
+    lr              = 1e-4    # learning rate
+    gamma           = 0.9     # discount factor
+    tau             = 1.0     # GAE lambda
+    beta            = 0.01    # entropy coefficient
+    epsilon         = 0.2     # PPO clip range
+    batch_size      = 128     # minibatch size
+    num_epochs      = 10      # passes over rollout buffer
+    num_local_steps = 128     # rollout steps per env
+
     return PPO(
         policy          = "CnnPolicy",
         env             = vec_env,
-        # ── core PPO ──────────────────────────────────────────────────
-        learning_rate   = 2.5e-4,
-        n_steps         = 128,      # steps collected per env per update
-        batch_size      = 256,      # minibatch size for gradient update
-        n_epochs        = 4,        # passes over the rollout buffer
-        gamma           = 0.99,     # discount factor
-        gae_lambda      = 0.95,     # GAE smoothing
-        clip_range      = 0.1,      # PPO clip epsilon
-        # ── regularisation ────────────────────────────────────────────
-        ent_coef        = 0.05,     # entropy bonus — cao hơn để chống entropy collapse giai đoạn đầu
-        vf_coef         = 0.5,      # value-function loss weight
-        max_grad_norm   = 0.5,      # gradient clipping
-        # ── logging ───────────────────────────────────────────────────
+        learning_rate   = lr,
+        n_steps         = num_local_steps,
+        batch_size      = batch_size,
+        n_epochs        = num_epochs,
+        gamma           = gamma,
+        gae_lambda      = tau,
+        clip_range      = epsilon,
+        ent_coef        = beta,
+        vf_coef         = 0.5,
+        max_grad_norm   = 0.5,
         tensorboard_log = LOG_DIR,
         verbose         = 1,
     )
@@ -135,9 +141,9 @@ def build_callbacks(n_envs: int):
 # ── CLI ────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(description="Train PPO on Contra NES")
-    p.add_argument("--envs",   type=int, default=8,
-                   help="Number of parallel environments (default: 8)")
-    p.add_argument("--steps",  type=int, default=10_000_000,
+    p.add_argument("--envs",   type=int, default=32,
+                   help="Number of parallel environments / num_processes (default: 32)")
+    p.add_argument("--steps",  type=int, default=1_000_000,
                    help="Total timesteps to train (default: 10M)")
     p.add_argument("--seed",   type=int, default=42)
     p.add_argument("--resume", type=str, default=None,

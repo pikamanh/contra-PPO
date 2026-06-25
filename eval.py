@@ -7,10 +7,13 @@ Usage:
     python eval.py --model checkpoints/contra_ppo_final.zip
     python eval.py --model best_model/contra_ppo_best.zip --episodes 5
     python eval.py --model checkpoints/contra_ppo_100000_steps.zip --slow
+    python eval.py --model best_model/contra_ppo_best.zip --record videos/run.mp4
 """
 import argparse
+import os
 import time
 
+import imageio
 import numpy as np
 import pygame
 
@@ -62,12 +65,13 @@ def get_nes_screen(vec_env) -> np.ndarray:
     return gym_env._env.unwrapped.screen   # (240, 256, 3) RGB, updated every step
 
 
-def run_episode(model, vec_env, screen, font, font_bold, clock, fps: int):
-    """Run one episode and return total reward."""
+def run_episode(model, vec_env, screen, font, font_bold, clock, fps: int, record: bool = False):
+    """Run one episode and return (total_reward, quit_requested, frames)."""
     obs = vec_env.reset()
     done      = False
     total_rew = 0.0
     step      = 0
+    frames    = []   # collected only when record=True
 
     while not done:
         # ── agent decides ──────────────────────────────────────────────
@@ -80,6 +84,8 @@ def run_episode(model, vec_env, screen, font, font_bold, clock, fps: int):
 
         # ── get raw NES frame directly from emulator buffer ────────────
         raw_frame = get_nes_screen(vec_env)            # (240, 256, 3)
+        if record:
+            frames.append(raw_frame.copy())
         frame     = np.transpose(raw_frame, (1, 0, 2)) # (256, 240, 3) for pygame
         surface   = pygame.surfarray.make_surface(frame)
         surface   = pygame.transform.scale(surface, (GAME_W, GAME_H))
@@ -149,13 +155,13 @@ def run_episode(model, vec_env, screen, font, font_bold, clock, fps: int):
         # ── quit check ─────────────────────────────────────────────────
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                return total_rew, True
+                return total_rew, True, frames
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                return total_rew, True
+                return total_rew, True, frames
 
         clock.tick(fps)
 
-    return total_rew, False
+    return total_rew, False, frames
 
 
 def parse_args():
@@ -168,6 +174,8 @@ def parse_args():
                    help="Render FPS (default: 60). Use lower value to slow down.")
     p.add_argument("--slow",     action="store_true",
                    help="Slow down to 20 FPS for easier observation")
+    p.add_argument("--record",   type=str, default=None, metavar="PATH",
+                   help="Save a video of the first episode to PATH (e.g. videos/run.mp4)")
     return p.parse_args()
 
 
@@ -191,11 +199,20 @@ def main():
     all_rewards = []
     for ep in range(1, args.episodes + 1):
         print(f"[eval] Episode {ep}/{args.episodes} ...")
-        reward, quit_requested = run_episode(
-            model, vec_env, screen, font, font_bold, clock, fps
+        record_this = (args.record is not None) and (ep == 1)
+        reward, quit_requested, frames = run_episode(
+            model, vec_env, screen, font, font_bold, clock, fps,
+            record=record_this,
         )
         all_rewards.append(reward)
         print(f"[eval] Episode {ep} total reward: {reward:.1f}")
+
+        if record_this and frames:
+            out_path = args.record
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+            print(f"[eval] Saving video ({len(frames)} frames) → {out_path}")
+            imageio.mimwrite(out_path, frames, fps=30)
+            print(f"[eval] Video saved.")
 
         if quit_requested:
             break

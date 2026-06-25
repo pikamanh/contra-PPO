@@ -100,38 +100,30 @@ class ContraEnv(NESEnv):
 
     def _get_reward(self):
         """
-        Shaped reward from four signals:
+        Shaped reward from four components:
 
-          +score delta    killing enemies / picking up items
-          +x progress     moving right through the level (capped to avoid scroll glitches)
-          -life lost      -50 per death
-          +level cleared  +500 when level index increments (boss defeated + transition)
-           +0.01          tiny survival bonus each frame
+          ProgressReward  = clip(x_delta - 0.01, -3, 3)   moving right through the level
+          ScoreReward     = clip(score_delta, 0, 2)        killing enemies / picking up items
+          LifePenalty     = -15 per death, else 0
+          TerminalReward  = +50 level complete | -35 game over | 0 otherwise
         """
         score_now = self._read_score()
         lives_now = int(self.ram[_RAM_P1_LIVES])
         x_now     = self._read_x()
         level_now = int(self.ram[_RAM_LEVEL])
 
-        reward = 0.0
-
-        score_delta = score_now - self._prev_score
-        if score_delta > 0:
-            reward += score_delta * 0.01
-
-        x_delta = x_now - self._prev_x
-        if 0 < x_delta < 200:          # cap filters out scroll-wrap glitches
-            reward += x_delta * 0.5
-
-        if lives_now < self._prev_lives:
-            reward -= 50.0
+        progress_reward = float(np.clip(x_now - self._prev_x - 0.01, -3, 3))
+        score_reward    = float(np.clip(score_now - self._prev_score, 0, 2))
+        life_penalty    = -15.0 if lives_now < self._prev_lives else 0.0
 
         if level_now > self._prev_level:
-            reward += 500.0
+            terminal_reward = 50.0
+        elif bool(self.ram[_RAM_P1_GAME_OVER]):
+            terminal_reward = -35.0
+        else:
+            terminal_reward = 0.0
 
-        reward += 0.01                  # survival bonus
-
-        return reward
+        return progress_reward + score_reward + life_penalty + terminal_reward
 
     def _get_done(self):
         """Episode ends when the game-over flag is set."""
