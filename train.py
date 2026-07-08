@@ -48,7 +48,7 @@ def make_env(rank: int, seed: int = 0):
         import warnings
         warnings.filterwarnings("ignore")
         env = ContraGymnasiumEnv(frame_skip=4)
-        # env = TimeLimit(env, max_episode_steps=MAX_EPISODE_STEPS)
+        env = TimeLimit(env, max_episode_steps=MAX_EPISODE_STEPS)
         env.reset(seed=seed + rank)
         return env
     set_random_seed(seed)
@@ -64,7 +64,7 @@ def build_vec_env(n_envs: int, seed: int = 0):
 
 
 def build_model(vec_env):
-    lr              = 1e-4    # learning rate
+    lr              = 5e-5    # learning rate
     gamma           = 0.9     # discount factor
     tau             = 1.0     # GAE lambda
     beta            = 0.02    # entropy coefficient

@@ -40,7 +40,38 @@ def make_eval_env():
 
 def load_model(model_path: str, env):
     print(f"[eval] Loading model from {model_path}")
-    model = PPO.load(model_path, env=env)
+    try:
+        model = PPO.load(model_path, env=env)
+    except ModuleNotFoundError as exc:
+        if exc.name != "numpy._core.numeric":
+            raise
+
+        # Kaggle currently saves SB3 metadata with NumPy 2.x module paths
+        # (numpy._core.*).  A local NumPy 1.x env can still load the PyTorch
+        # weights, but cloudpickle fails on a few metadata objects first.
+        from stable_baselines3.common.buffers import RolloutBuffer
+        from stable_baselines3.ppo import CnnPolicy
+
+        print(
+            "[eval] Checkpoint metadata was saved with NumPy 2.x; "
+            "retrying with local eval-safe metadata."
+        )
+        model = PPO.load(
+            model_path,
+            env=env,
+            custom_objects={
+                "policy_class": CnnPolicy,
+                "rollout_buffer_class": RolloutBuffer,
+                "observation_space": env.observation_space,
+                "action_space": env.action_space,
+                "_last_obs": None,
+                "_last_episode_starts": None,
+                "ep_info_buffer": None,
+                "ep_success_buffer": None,
+                "clip_range": lambda _: 0.2,
+                "lr_schedule": lambda _: 1e-4,
+            },
+        )
     print("[eval] Model loaded.")
     return model
 
@@ -99,6 +130,8 @@ def run_episode(model, vec_env, screen, font, font_bold, clock, fps: int, record
         # info dict comes from the innermost env via VecEnv
         env_info = info[0] if info else {}
         action_name = COMPLEX_MOVEMENT[int(action[0])]
+        executed_action = env_info.get("executed_action", int(action[0]))
+        executed_action_name = COMPLEX_MOVEMENT[int(executed_action)]
 
         # Read raw RAM for demo mode diagnosis
         _gym_env = vec_env.venv.venv.envs[0]
@@ -110,7 +143,12 @@ def run_episode(model, vec_env, screen, font, font_bold, clock, fps: int, record
 
         hud = [
             ("── Agent ──────────────",   None,              True),
-            ("action",   str(action_name),                   (255, 255, 255)),
+            ("policy action", str(action_name),               (255, 255, 255)),
+            ("executed", str(executed_action_name),           (180, 220, 255)),
+            ("forced NOOP", str(env_info.get("forced_respawn_noop", False)),
+                                                               (255, 180, 100)),
+            ("noop left", str(env_info.get("respawn_noop_remaining", 0)),
+                                                               (200, 200, 200)),
             ("step",     str(step),                          (200, 200, 200)),
             ("",         "",                                 None),
             ("── Episode ────────────",   None,              True),

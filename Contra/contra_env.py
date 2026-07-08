@@ -19,6 +19,7 @@ _RAM_SCREEN_NUMBER = 0x0064  # Level Screen Number
 _RAM_SCROLL_X      = 0x00FD  # Horizontal scroll pixel offset (0-255)
 
 _RAM_P1_STATE     = 0x0090  # 0x00 falling-in, 0x01 normal, 0x02 dead, 0x03 frozen
+_RAM_P1_SPRITE_X  = 0x0334  # P1 sprite x-position on screen
 
 _ENEMY_TYPE_BASE  = 0x0528  # Enemy Type array, 16 slots
 _ENEMY_SLOT_COUNT = 16
@@ -27,6 +28,9 @@ _ENEMY_SLOT_COUNT = 16
 _LOGO_WAIT     = 300
 _START_HOLD    = 60
 _START_RELEASE = 90
+
+_FRONTIER_SCORE_MARGIN = 32
+_STAGNATION_GRACE_STEPS = 90
 
 
 def _bcd2(byte: int) -> int:
@@ -39,15 +43,15 @@ class ContraEnv(NESEnv):
     Contra NES reinforcement-learning environment.
 
     Reward components (all divided by 10 before returning):
-      ProgressReward  = clip(x_delta - 0.5, -3, 3)   moving right; -0.5 bias penalises idling
-      ScoreReward     = clip(score_delta, 0, 2)        kills / pickups
+      ProgressReward  = local movement + bonus for reaching a new max x-position
+      ScoreReward     = small kill / pickup reward only near the progress frontier
       LifePenalty     = -15 on death, else 0
-      DodgeReward     = +0.5 per step alive in normal state with enemies on screen
+      DodgeReward     = +0.1 per step alive in normal state with enemies on screen
+      Stagnation      = increasing penalty after not advancing for a while
       TerminalReward  = +50 level clear | -35 game over | 0 otherwise
 
-    The progress bias (-0.5) and dodge reward (+0.5) are balanced so that
-    standing still near enemies nets 0 while advancing nets ≥1, preventing
-    the agent from learning to idle purely for the dodge bonus.
+    Score is intentionally gated by progress. Without this, the policy can
+    learn to stand still or walk backward while farming respawning enemies.
     """
 
     reward_range = (-float('inf'), float('inf'))
@@ -58,6 +62,8 @@ class ContraEnv(NESEnv):
         self._prev_lives = 0
         self._prev_x     = 0
         self._prev_level = 0
+        self._max_x      = 0
+        self._stagnant_steps = 0
 
     # ------------------------------------------------------------------
     # NESEnv hooks
@@ -75,32 +81,55 @@ class ContraEnv(NESEnv):
         self._prev_lives = int(self.ram[_RAM_P1_LIVES])
         self._prev_x     = self._read_x()
         self._prev_level = int(self.ram[_RAM_LEVEL])
+        self._max_x      = self._prev_x
+        self._stagnant_steps = 0
 
     def _get_reward(self):
         score_now = self._read_score()
         lives_now = int(self.ram[_RAM_P1_LIVES])
         x_now     = self._read_x()
         level_now = int(self.ram[_RAM_LEVEL])
-
-        # -0.5 bias: standing still costs -0.05 after /10, forcing forward movement
-        progress_reward = float(np.clip(x_now - self._prev_x - 0.5, -3, 3))
-
-        score_reward = float(np.clip(score_now - self._prev_score, 0, 2))
-
+        player_state = int(self.ram[_RAM_P1_STATE])
         just_died    = lives_now < self._prev_lives
+        x_delta      = x_now - self._prev_x
+        new_progress = max(0, x_now - self._max_x)
+
+        if not just_died and player_state == 0x01:
+            # Local movement helps the agent recover after respawn. The new-progress
+            # bonus makes the best strategy push the frontier instead of oscillating.
+            progress_reward = float(
+                np.clip(x_delta - 0.5, -4, 3)
+                + 1.5 * np.clip(new_progress, 0, 4)
+            )
+        else:
+            progress_reward = 0.0
+
+        near_frontier = x_now >= self._max_x - _FRONTIER_SCORE_MARGIN
+        if near_frontier or new_progress > 0:
+            score_reward = float(np.clip(score_now - self._prev_score, 0, 1))
+        else:
+            score_reward = 0.0
+
         life_penalty = -15.0 if just_died else 0.0
 
-        # Dodge reward: +0.5 each frame the player is alive (normal state) while
-        # enemies are present. Cancels the standing-still cost exactly, so the
-        # agent must still progress to earn positive reward.
-        if not just_died and int(self.ram[_RAM_P1_STATE]) == 0x01:
+        # A tiny survival reward keeps dodging useful but is too small to make
+        # standing still near enemies profitable.
+        if not just_died and player_state == 0x01:
             active_enemies = sum(
                 1 for i in range(_ENEMY_SLOT_COUNT)
                 if self.ram[_ENEMY_TYPE_BASE + i] != 0
             )
-            dodge_reward = 0.5 if active_enemies > 0 else 0.0
+            dodge_reward = 0.1 if active_enemies > 0 else 0.0
         else:
             dodge_reward = 0.0
+
+        if player_state == 0x01 and self._stagnant_steps > _STAGNATION_GRACE_STEPS:
+            stagnation_penalty = -min(
+                2.0,
+                (self._stagnant_steps - _STAGNATION_GRACE_STEPS) / 60,
+            )
+        else:
+            stagnation_penalty = 0.0
 
         if level_now > self._prev_level:
             terminal_reward = 50.0
@@ -109,7 +138,14 @@ class ContraEnv(NESEnv):
         else:
             terminal_reward = 0.0
 
-        return (progress_reward + score_reward + life_penalty + dodge_reward + terminal_reward) / 10
+        return (
+            progress_reward
+            + score_reward
+            + life_penalty
+            + dodge_reward
+            + stagnation_penalty
+            + terminal_reward
+        ) / 10
 
     def _get_done(self):
         return bool(self.ram[_RAM_P1_GAME_OVER])
@@ -120,6 +156,10 @@ class ContraEnv(NESEnv):
             'lives':         int(self.ram[_RAM_P1_LIVES]),
             'level':         int(self.ram[_RAM_LEVEL]) + 1,
             'x_pos':         self._read_x(),
+            'camera_x':      self._read_camera_x(),
+            'player_screen_x': int(self.ram[_RAM_P1_SPRITE_X]),
+            'max_x':         self._max_x,
+            'stagnant_steps': self._stagnant_steps,
             'player_state':  int(self.ram[_RAM_P1_STATE]),
             'boss_defeated': bool(self.ram[_RAM_BOSS_DEFEATED]),
             'stage_over':    self._stage_is_over(),
@@ -127,10 +167,25 @@ class ContraEnv(NESEnv):
         }
 
     def _did_step(self, done):  # noqa: ARG002
+        x_now = self._read_x()
+        level_now = int(self.ram[_RAM_LEVEL])
+        player_state = int(self.ram[_RAM_P1_STATE])
+
+        if player_state == 0x01:
+            if level_now > self._prev_level or x_now > self._max_x + 1:
+                self._max_x = x_now
+                self._stagnant_steps = 0
+            elif x_now <= self._prev_x + 0.5:
+                self._stagnant_steps += 1
+            else:
+                self._stagnant_steps = max(0, self._stagnant_steps - 1)
+        else:
+            self._stagnant_steps = 0
+
         self._prev_score = self._read_score()
         self._prev_lives = int(self.ram[_RAM_P1_LIVES])
-        self._prev_x     = self._read_x()
-        self._prev_level = int(self.ram[_RAM_LEVEL])
+        self._prev_x     = x_now
+        self._prev_level = level_now
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -141,6 +196,9 @@ class ContraEnv(NESEnv):
                 + _bcd2(self.ram[_RAM_SCORE_LO])) * 100
 
     def _read_x(self) -> int:
+        return self._read_camera_x() + int(self.ram[_RAM_P1_SPRITE_X])
+
+    def _read_camera_x(self) -> int:
         return int(self.ram[_RAM_SCREEN_NUMBER]) * 256 + int(self.ram[_RAM_SCROLL_X])
 
     def _stage_is_over(self) -> bool:
