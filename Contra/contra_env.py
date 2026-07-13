@@ -11,6 +11,8 @@ _RAM_P1_LIVES     = 0x0032  # P1 lives; 0x00 = last life
 _RAM_P1_GAME_OVER = 0x0038  # 0x00 playing, 0x01 game over
 _RAM_BOSS_DEFEATED = 0x003B  # 0x00 = no, 0x01 = yes
 _RAM_END_LEVEL_SEQ = 0x002D  # non-zero = in end-level sequence
+_RAM_LEVEL_STOP_SCROLL = 0x0058  # 0xff when boss auto-scroll starts
+_RAM_BOSS_AUTO_SCROLL_COMPLETE = 0x0084  # set when boss reveal auto-scroll ends
 
 _RAM_SCORE_HI     = 0x07E2  # P1 score high byte (BCD)
 _RAM_SCORE_LO     = 0x07E3  # P1 score low byte  (BCD)
@@ -31,6 +33,8 @@ _START_RELEASE = 90
 
 _FRONTIER_SCORE_MARGIN = 32
 _STAGNATION_GRACE_STEPS = 90
+_BOSS_DEFEATED_BONUS = 120.0
+_STAGE_OVER_BONUS = 80.0
 
 
 def _bcd2(byte: int) -> int:
@@ -47,8 +51,9 @@ class ContraEnv(NESEnv):
       ScoreReward     = small kill / pickup reward only near the progress frontier
       LifePenalty     = -15 on death, else 0
       DodgeReward     = +0.1 per step alive in normal state with enemies on screen
-      Stagnation      = increasing penalty after not advancing for a while
-      TerminalReward  = +50 level clear | -35 game over | 0 otherwise
+      Stagnation      = increasing penalty after not advancing, disabled in boss phase
+      BossReward      = one-time boss defeat / stage-over bonuses
+      TerminalReward  = +50 level advance | -35 game over | 0 otherwise
 
     Score is intentionally gated by progress. Without this, the policy can
     learn to stand still or walk backward while farming respawning enemies.
@@ -64,6 +69,8 @@ class ContraEnv(NESEnv):
         self._prev_level = 0
         self._max_x      = 0
         self._stagnant_steps = 0
+        self._prev_boss_defeated = False
+        self._prev_stage_over = False
 
     # ------------------------------------------------------------------
     # NESEnv hooks
@@ -83,6 +90,8 @@ class ContraEnv(NESEnv):
         self._prev_level = int(self.ram[_RAM_LEVEL])
         self._max_x      = self._prev_x
         self._stagnant_steps = 0
+        self._prev_boss_defeated = self._boss_is_defeated()
+        self._prev_stage_over = self._stage_is_over()
 
     def _get_reward(self):
         score_now = self._read_score()
@@ -90,6 +99,9 @@ class ContraEnv(NESEnv):
         x_now     = self._read_x()
         level_now = int(self.ram[_RAM_LEVEL])
         player_state = int(self.ram[_RAM_P1_STATE])
+        boss_phase   = self._boss_phase()
+        boss_defeated = self._boss_is_defeated()
+        stage_over   = self._stage_is_over()
         just_died    = lives_now < self._prev_lives
         x_delta      = x_now - self._prev_x
         new_progress = max(0, x_now - self._max_x)
@@ -123,13 +135,23 @@ class ContraEnv(NESEnv):
         else:
             dodge_reward = 0.0
 
-        if player_state == 0x01 and self._stagnant_steps > _STAGNATION_GRACE_STEPS:
+        if (
+            not boss_phase
+            and player_state == 0x01
+            and self._stagnant_steps > _STAGNATION_GRACE_STEPS
+        ):
             stagnation_penalty = -min(
                 2.0,
                 (self._stagnant_steps - _STAGNATION_GRACE_STEPS) / 60,
             )
         else:
             stagnation_penalty = 0.0
+
+        boss_reward = 0.0
+        if boss_defeated and not self._prev_boss_defeated:
+            boss_reward += _BOSS_DEFEATED_BONUS
+        if stage_over and not self._prev_stage_over:
+            boss_reward += _STAGE_OVER_BONUS
 
         if level_now > self._prev_level:
             terminal_reward = 50.0
@@ -144,6 +166,7 @@ class ContraEnv(NESEnv):
             + life_penalty
             + dodge_reward
             + stagnation_penalty
+            + boss_reward
             + terminal_reward
         ) / 10
 
@@ -161,7 +184,8 @@ class ContraEnv(NESEnv):
             'max_x':         self._max_x,
             'stagnant_steps': self._stagnant_steps,
             'player_state':  int(self.ram[_RAM_P1_STATE]),
-            'boss_defeated': bool(self.ram[_RAM_BOSS_DEFEATED]),
+            'boss_phase':    self._boss_phase(),
+            'boss_defeated': self._boss_is_defeated(),
             'stage_over':    self._stage_is_over(),
             'game_over':     bool(self.ram[_RAM_P1_GAME_OVER]),
         }
@@ -170,8 +194,11 @@ class ContraEnv(NESEnv):
         x_now = self._read_x()
         level_now = int(self.ram[_RAM_LEVEL])
         player_state = int(self.ram[_RAM_P1_STATE])
+        boss_phase = self._boss_phase()
 
-        if player_state == 0x01:
+        if boss_phase:
+            self._stagnant_steps = 0
+        elif player_state == 0x01:
             if level_now > self._prev_level or x_now > self._max_x + 1:
                 self._max_x = x_now
                 self._stagnant_steps = 0
@@ -186,6 +213,8 @@ class ContraEnv(NESEnv):
         self._prev_lives = int(self.ram[_RAM_P1_LIVES])
         self._prev_x     = x_now
         self._prev_level = level_now
+        self._prev_boss_defeated = self._boss_is_defeated()
+        self._prev_stage_over = self._stage_is_over()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -203,6 +232,17 @@ class ContraEnv(NESEnv):
 
     def _stage_is_over(self) -> bool:
         return bool(self.ram[_RAM_END_LEVEL_SEQ])
+
+    def _boss_is_defeated(self) -> bool:
+        return bool(self.ram[_RAM_BOSS_DEFEATED])
+
+    def _boss_phase(self) -> bool:
+        return (
+            int(self.ram[_RAM_LEVEL_STOP_SCROLL]) == 0xFF
+            or bool(self.ram[_RAM_BOSS_AUTO_SCROLL_COMPLETE])
+            or self._boss_is_defeated()
+            or self._stage_is_over()
+        )
 
 
 __all__ = [ContraEnv.__name__]
