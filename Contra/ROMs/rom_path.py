@@ -12,7 +12,7 @@ def rom_path():
 
     """
 
-    rom = "contra.nes"
+    rom = "contra_no_final_boss.nes"
     rom = os.path.join(os.path.dirname(os.path.abspath(__file__)), rom)
 
     return rom

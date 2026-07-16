@@ -35,6 +35,8 @@ _FRONTIER_SCORE_MARGIN = 32
 _STAGNATION_GRACE_STEPS = 90
 _BOSS_DEFEATED_BONUS = 120.0
 _STAGE_OVER_BONUS = 80.0
+_TARGET_LEVEL = 0x00  # Stage 1 is the task episode; stages are zero-indexed.
+_BOSS_END_SEQUENCE_COMPLETE = 0x02
 
 
 def _bcd2(byte: int) -> int:
@@ -171,7 +173,12 @@ class ContraEnv(NESEnv):
         ) / 10
 
     def _get_done(self):
-        return bool(self.ram[_RAM_P1_GAME_OVER])
+        game_over = bool(self.ram[_RAM_P1_GAME_OVER])
+        won = (
+            int(self.ram[_RAM_LEVEL]) == _TARGET_LEVEL
+            and int(self.ram[_RAM_BOSS_DEFEATED]) == _BOSS_END_SEQUENCE_COMPLETE
+        )
+        return game_over or won
 
     def _get_info(self):
         return {
@@ -186,7 +193,13 @@ class ContraEnv(NESEnv):
             'player_state':  int(self.ram[_RAM_P1_STATE]),
             'boss_phase':    self._boss_phase(),
             'boss_defeated': self._boss_is_defeated(),
+            'boss_defeated_state': int(self.ram[_RAM_BOSS_DEFEATED]),
             'stage_over':    self._stage_is_over(),
+            'won':           (
+                int(self.ram[_RAM_LEVEL]) == _TARGET_LEVEL
+                and int(self.ram[_RAM_BOSS_DEFEATED])
+                == _BOSS_END_SEQUENCE_COMPLETE
+            ),
             'game_over':     bool(self.ram[_RAM_P1_GAME_OVER]),
         }
 
