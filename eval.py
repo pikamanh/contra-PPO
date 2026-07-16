@@ -213,8 +213,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Evaluate a trained Contra PPO agent")
     p.add_argument("--model", "--model-path", dest="model", type=str, required=True,
                    help="Path to .zip model checkpoint")
-    p.add_argument("--episodes", type=int, default=3,
-                   help="Number of episodes to run (default: 3)")
+    p.add_argument("--episodes", type=int, default=1,
+                   help="Number of episodes to run (default: 1)")
     p.add_argument("--fps",      type=int, default=60,
                    help="Render FPS (default: 60). Use lower value to slow down.")
     p.add_argument("--slow",     action="store_true",
