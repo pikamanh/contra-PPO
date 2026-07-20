@@ -65,24 +65,41 @@ The policy is optimized using **Proximal Policy Optimization (PPO)** from Stable
 
 ```
 contra-PPO/
-│
-├── env/
-│   ├── contra_env.py          # Custom Gymnasium environment
-│   ├── wrappers.py
-│   └── utils.py
-│
-├── models/
-│   ├── best_model.zip
-│   └── checkpoints/
-│
-├── train.py                   # PPO training
-├── evaluate.py                # Model evaluation
-├── play.py                    # Watch trained agent
-│
-├── requirements.txt
+├── Contra/
+│   ├── ROMs/
+│   │   ├── contra.nes                 # Original Contra ROM
+│   │   ├── contra_final.nes          # Patched ROM variant
+│   │   ├── rom_path.py                # ROM path resolver
+│   │   └── decode_target.py           # ROM decoding helper
+│   ├── actions.py                          # NES action spaces
+│   ├── contra_env.py                       # Reward, termination, and RAM logic
+│   └── wrappers.py                         # Gymnasium preprocessing wrapper
+├── best_weight/
+│   └── contra_ppo_best.zip                 # Bundled trained weight
+├── best_model/                                 # Auto-generated robust-best model
+│   └── contra_ppo_best.zip
+├── checkpoints/                                # Auto-generated periodic/final weights
+├── logs/                                       # TensorBoard and monitor logs
+├── video/                                      # Evaluation MP4/GIF recordings
+│   └── training_progress_comparison.gif   # Synchronized checkpoint comparison
+├── tools/                                      # ROM patching tools and patch data
+├── Img/                                        # README/project image assets
+├── train.py                                    # PPO training and resume entry point
+├── eval.py                                     # Visual evaluation and video recording
+├── play_game.py                                # Manual game-play entry point
+├── debug_play.py                               # Manual play with RAM/debug overlay
+├── Train-kaggle.ipynb                          # Kaggle training notebook
+├── Contra_RAM_Map_Table.md                     # Contra RAM reference
+├── Info_metrics.md                             # Training/evaluation metric notes
+├── requirements.txt                            # Python dependencies
+├── makefile                                    # Project utility commands
 ├── README.md
 └── LICENSE
 ```
+
+`best_model/` and `checkpoints/` are created automatically by `train.py` and
+are excluded from Git. The repository's existing pretrained model is stored in
+`best_weight/`.
 
 ---
 
@@ -125,39 +142,81 @@ pip install -r requirements.txt
 
 ## 🚀 Training
 
-Start training the PPO agent
+Start training the PPO agent:
 
 ```bash
-python train.py
+python train.py --envs 16 --steps 1_000_000
 ```
 
-The model checkpoints will be saved automatically.
+Model weights are saved automatically during and after training:
+
+| Model artifact | Save rule | Output path |
+|---|---|---|
+| Periodic checkpoint | Approximately every 100,000 total timesteps across all parallel environments | `checkpoints/contra_ppo_<timesteps>_steps.zip` |
+| Robust best weight | Evaluated deterministically every 50,000 total timesteps by default; saved whenever `(minimum episode reward, mean episode reward)` improves | `best_model/contra_ppo_best.zip` |
+| Final checkpoint | Saved when the requested training run finishes | `checkpoints/contra_ppo_final.zip` |
+
+The robust-best evaluation uses 5 episodes by default. It prioritizes the
+lowest episode reward first, then uses mean reward as a tie-breaker. This favors
+consistent policies over policies that achieve one strong episode but fail
+early in another. Configure it with `--eval-freq` and `--eval-episodes`.
+
+### Resume Training
+
+Resume from any saved checkpoint by passing its `.zip` path:
+
+```bash
+python train.py --resume checkpoints/contra_ppo_500000_steps.zip --envs 16 --steps 500_000
+```
+
+The timestep counter continues from the loaded checkpoint, while `--steps`
+specifies the training budget for the resumed run. Periodic checkpoints,
+best-weight evaluation, TensorBoard logging, and final-model saving remain
+enabled. The resumed model uses a learning rate of `5e-5` by default; override
+it when needed:
+
+```bash
+python train.py --resume checkpoints/contra_ppo_500000_steps.zip --steps 500_000 --resume-lr 1e-5
+```
+
+> **Note:** The robust-best score is reset when a new training process starts.
+> Therefore, the first successful evaluation in a resumed run may overwrite
+> `best_model/contra_ppo_best.zip`. Preserve a copy first if the previous best
+> model must be retained.
 
 ---
 
 ## ▶️ Evaluation
 
-Evaluate the trained model
+Evaluate the trained model and the trained PPO agent will control the character automatically.
 
 ```bash
-python evaluate.py
+python eval.py --model best_weights/contra_ppo_best.zip
 ```
 
-Metrics include
-
-- Average reward
-- Episode length
-- Success rate
-
----
-
-## 🎥 Play with the Trained Agent
+Slow the on-screen playback to 20 FPS for easier observation:
 
 ```bash
-python play.py
+python eval.py --model best_weights/contra_ppo_best.zip --slow
 ```
 
-The trained PPO agent will control the character automatically.
+Record the first evaluation episode to a video file:
+
+```bash
+python eval.py --model best_weights/contra_ppo_best.zip --record video/best_model_eval.mp4
+```
+
+| Argument | Description |
+|---|---|
+| `--slow` | Limits the Pygame display to 20 FPS so the agent's actions are easier to inspect. It changes only playback speed, not the policy's decisions or rewards. |
+| `--record PATH` | Captures the first evaluation episode and saves it to `PATH` at 30 FPS. The destination directory is created automatically when needed. |
+
+The arguments can be combined to watch the evaluation slowly while recording
+it:
+
+```bash
+python eval.py --model best_weights/contra_ppo_best.zip --slow --record video/best_model_eval.mp4
+```
 
 ---
 

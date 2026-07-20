@@ -15,7 +15,7 @@ pygame.display.set_caption("Contra | Mũi tên, J=bắn, K=nhảy, Enter=Start |
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 24)
 
-env = NESEnv("Contra/ROMs/contra.nes")
+env = NESEnv("Contra/ROMs/contra_final.nes")
 env = JoypadSpace(env, COMPLEX_MOVEMENT)
 
 result = env.reset()

@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROM = ROOT / "Contra" / "ROMs" / "contra.nes"
-OUTPUT_ROM = ROOT / "Contra" / "ROMs" / "contra_no_final_boss.nes"
+OUTPUT_ROM = ROOT / "Contra" / "ROMs" / "contra_final.nes"
 SOURCE_MD5 = "7bdad8b4a7a56a634c9649d20bd3011b"
 
 # File offset, original pointer, replacement pointer.
