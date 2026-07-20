@@ -235,12 +235,14 @@ The following evaluation recordings show how the policy changes across
 training checkpoints and compare them with the final best model selected by
 the evaluation callback.
 
-| Model | Training progress | Video length | Evaluation recording |
-|---|---:|---:|---|
-| Checkpoint | 1,000,000 steps | 12.0 s | [Watch the 1M-step agent](video/1_000_000_steps.mp4) |
-| Checkpoint | 2,000,000 steps | 21.6 s | [Watch the 2M-step agent](video/2_000_000_steps.mp4) |
-| Checkpoint | 4,000,000 steps | 30.1 s | [Watch the 4M-step agent](video/4_000_000_steps.mp4) |
-| Final best weight | Best evaluation checkpoint | 32.8 s | [Watch the final best agent](video/output_final.mp4) |
+| 1,000,000 steps (12.0 s) | 2,000,000 steps (21.6 s) | 4,000,000 steps (30.1 s) | Final best weight (32.8 s) |
+|:---:|:---:|:---:|:---:|
+| ![Contra PPO agent at 1 million training steps](video/1_000_000_steps.gif) | ![Contra PPO agent at 2 million training steps](video/2_000_000_steps.gif) | ![Contra PPO agent at 4 million training steps](video/4_000_000_steps.gif) | ![Contra PPO final best agent](video/output_final.gif) |
+
+Original recordings: [1M steps](video/1_000_000_steps.mp4) ·
+[2M steps](video/2_000_000_steps.mp4) ·
+[4M steps](video/4_000_000_steps.mp4) ·
+[final best weight](video/output_final.mp4)
 
 These videos provide a qualitative comparison of movement, survival, combat,
 and level progression. Video length is included only as recording metadata; use
