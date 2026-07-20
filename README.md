@@ -235,19 +235,20 @@ The following evaluation recordings show how the policy changes across
 training checkpoints and compare them with the final best model selected by
 the evaluation callback.
 
-| 1,000,000 steps (12.0 s) | 2,000,000 steps (21.6 s) | 4,000,000 steps (30.1 s) | Final best weight (32.8 s) |
-|:---:|:---:|:---:|:---:|
-| ![Contra PPO agent at 1 million training steps](video/1_000_000_steps.gif) | ![Contra PPO agent at 2 million training steps](video/2_000_000_steps.gif) | ![Contra PPO agent at 4 million training steps](video/4_000_000_steps.gif) | ![Contra PPO final best agent](video/output_final.gif) |
+![Synchronized comparison of Contra PPO agents at 1M, 2M, and 4M training steps and the final best weight](video/training_progress_comparison.gif)
+
+All four recordings start together. When a shorter recording ends, its final
+frame remains visible until the final-best recording finishes at 32.8 seconds.
 
 Original recordings: [1M steps](video/1_000_000_steps.mp4) ·
 [2M steps](video/2_000_000_steps.mp4) ·
 [4M steps](video/4_000_000_steps.mp4) ·
 [final best weight](video/output_final.mp4)
 
-These videos provide a qualitative comparison of movement, survival, combat,
-and level progression. Video length is included only as recording metadata; use
-the evaluation metrics (mean reward, success rate, and episode length) for a
-quantitative model comparison.
+This synchronized view provides a qualitative comparison of movement,
+survival, combat, and level progression. Video length is included only as
+recording metadata; use the evaluation metrics (mean reward, success rate, and
+episode length) for a quantitative model comparison.
 
 ---
 
