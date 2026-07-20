@@ -1,113 +1,3 @@
-# Gym for Contra
-
-![image](https://haoyue.xyz/2019/07/24/5d380b686b1ca.png)
-
-An [OpenAI](https://github.com/openai/gym) Gym environment for Contra.  on The Nintendo Entertainment System (NES) using the [nes-py emulator](https://github.com/Kautenja/nes-py).
-
-[Project address](https://github.com/OuYanghaoyue/gym_contra)
-
-# Installation
-The preferred installation of Contra is from pip:
-```shell
-pip install gym-contra
-```
-# Usage
-## Python
-You must import ContraEnv before trying to make an environment. This is because gym environments are registered at runtime. By default, ContraEnv use the full NES action space of 256 discrete actions. To contstrain this,ContraEnv.actions provides three actions lists (RIGHT_ONLY, SIMPLE_MOVEMENT, and COMPLEX_MOVEMENT) for the nes_py.wrappers.JoypadSpace wrapper. See [Contra/actions.py](https://github.com/OuYanghaoyue/gym_contra/blob/master/Contra/actions.py) for a breakdown of the legal actions in each of these three lists.
-
-
-```Python
-from nes_py.wrappers import JoypadSpace
-import gym
-from Contra.actions import SIMPLE_MOVEMENT, COMPLEX_MOVEMENT, RIGHT_ONLY
-
-env = gym.make('Contra-v0')
-env = JoypadSpace(env, RIGHT_ONLY)
-
-print("actions", env.action_space)
-print("observation_space ", env.observation_space.shape[0])
-
-done = False
-env.reset()
-for step in range(5000):
-    if done:
-        print("Over")
-        break
-    state, reward, done, info = env.step(env.action_space.sample())
-    env.render()
-
-env.close()
-```
-
-> NOTE: ContraEnv.make is just an alias to gym.make for convenience.
-> 
-> NOTE: remove calls to render in training code for a nontrivial speedup.
-
-## Command Line
-Prepare to write please wait
-
-> NOTE: by default,-m is set to human.
-
-## Environments
-These environments allow 3 attempts (lives) to play in the game. The environments only send reward-able game-play frames to agents; No cut-scenes, loading screens, etc. are sent from the NES emulator to an agent nor can an agent perform actions during these instances. If a cut-scene is not able to be skipped by hacking the NES's RAM, the environment will lock the Python process until the emulator is ready for the next action.
-
-## Step
-> Info about the rewards and info returned by the step method.
-
-### Reward Function
-The reward function assumes the objective of the game is to move as far right as possible (increase the agent's x value), as fast as possible, without dying. To model this game, three separate variables compose the reward:
-
-1. v: the difference in agent x values between states
-- in this case this is instantaneous velocity for the given step
-- v = x1 - x0
-    - x0 is the x position before the step
-    - x1 is the x position after the step
-- moving right ⇔ v > 0
-- moving left ⇔ v < 0
-- not moving ⇔ v = 0
-
-2. d: a death penalty that penalizes the agent for dying in a state
-    - this penalty encourages the agent to avoid death
-    - alive ⇔ d = 0
-    - dead ⇔ d = -15
-3. b : if the agent defeated the boss 
-    - this reword will encourages the agent to defeat boss as possible
-    - no defeated ⇔ 0
-    - defeated ⇔ 30
-
-So the reward function is:
-
-r = v + d + b
-
-
-> Note:The reward is clipped into the range (-15, 15).
-
-## info dictionary
-The info dictionary returned by the step method contains the following keys:
-
-
-```Python
-life=self._life,
-dead=self._is_dead,
-done=self._get_done(),
-score=self._score(),
-status=self._player_state,
-x_pos=self._x_position,
-y_pos=self._y_position,defeated=self._get_boss_defeated,
-
-```
-
-Key  | Type | Description |
----|--- | ---
-life | int | The number of lives left, i.e., {3, 2, 1}
-dead | Bool | Get The palyer is dead
-done | Bool | Get the game is game over
-score | int | Get the player's score
-status | Bool | Alive Status (00 - Dead, 01 - Alive, 02 - Dying)
-x_pos | int | Player's x position in the stage (from the left)
-y_pos |	int	| Player's y position in the stage (from the bottom)
-defeated | Bool| self._get_boss_defeated
-
 # 🎮 Contra-PPO: Reinforcement Learning Agent for Contra using PPO
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)]()
@@ -287,25 +177,44 @@ The trained PPO agent will control the character automatically.
 
 ---
 
-## 🎯 Reward Design
+## 🎯 Reward and Risk Design
 
-The reward function encourages the following behaviors:
+`ContraEnv` combines progress, combat, survival, and terminal signals into one
+scalar reward. Every raw component is summed and then divided by `10` before it
+is returned to the agent.
 
-Positive Rewards
+### Reward signals
 
-- Moving forward
-- Defeating enemies
-- Collecting power-ups
-- Completing a stage
+| Component | Trigger | Raw value | Returned contribution | Purpose |
+|---|---|---:|---:|---|
+| Progress | The player moves while alive and in the normal state | `clip(Δx - 0.5, -4, 3) + 1.5 * clip(new_progress, 0, 4)` | Raw value `/ 10` | Encourages local forward movement and gives an additional bonus for extending the furthest reached position. |
+| Score | The score increases while the player is within 32 pixels of the progress frontier, or creates new progress | `0` or `+1` | `0` or `+0.1` | Rewards defeating an enemy or collecting a scoring item without allowing the agent to farm score far behind the frontier. |
+| Dodge/survival | The player is alive in the normal state while at least one enemy is active | `+0.1` | `+0.01` | Provides a small incentive to survive and dodge; it is intentionally too small to make standing still profitable. |
+| Boss defeated | The boss-defeated flag changes from false to true | `+120` once | `+12` once | Strongly rewards completing the main stage objective. |
+| Stage over | The end-of-stage sequence starts | `+80` once | `+8` once | Rewards reaching the confirmed stage-completion sequence. |
+| Level advance | The current level becomes greater than the previous level | `+50` | `+5` | Success signal for advancing to the next level. |
 
-Negative Rewards
+### Risk and penalty signals
 
-- Taking damage
-- Dying
-- Standing still
-- Moving backward for too long
+| Risk event | Trigger | Raw value | Returned contribution | Effect |
+|---|---|---:|---:|---|
+| Backward/no useful movement | The progress formula becomes negative because local movement is insufficient | Down to `-4` | Down to `-0.4` | Discourages retreating and movement that does not compensate for the per-step progress threshold. |
+| Death/life loss | The current life count is lower than on the previous step | `-15` | `-1.5` | Makes losing a life costly. No separate penalty is applied merely for taking non-lethal damage. |
+| Stagnation | More than 90 stagnant steps outside the boss phase | From about `-0.017` down to `-2` | From about `-0.0017` down to `-0.2` | Increasingly penalizes standing still; it is disabled during the boss phase. |
+| Game over | The game-over RAM flag is set | `-35` | `-3.5` | Terminal failure penalty. |
 
-This reward shaping helps the agent learn faster while avoiding reward exploitation.
+The environment currently treats risk as **negative reward**, rather than
+returning a separate cost or risk signal. Therefore PPO optimizes the single
+combined objective:
+
+```text
+reward = (progress + score + dodge + boss + terminal
+          + life_penalty + stagnation_penalty) / 10
+```
+
+An episode ends on game over or when the Stage 1 boss completion state is
+detected. Boss-phase stagnation is disabled because horizontal progress is no
+longer a reliable objective during that encounter.
 
 ---
 
@@ -319,6 +228,24 @@ After training, the PPO agent is capable of:
 - Progressing through the level autonomously
 
 Performance can be further improved through reward tuning and longer training.
+
+### Training Progress Comparison
+
+The following evaluation recordings show how the policy changes across
+training checkpoints and compare them with the final best model selected by
+the evaluation callback.
+
+| Model | Training progress | Video length | Evaluation recording |
+|---|---:|---:|---|
+| Checkpoint | 1,000,000 steps | 12.0 s | [Watch the 1M-step agent](video/1_000_000_steps.mp4) |
+| Checkpoint | 2,000,000 steps | 21.6 s | [Watch the 2M-step agent](video/2_000_000_steps.mp4) |
+| Checkpoint | 4,000,000 steps | 30.1 s | [Watch the 4M-step agent](video/4_000_000_steps.mp4) |
+| Final best weight | Best evaluation checkpoint | 32.8 s | [Watch the final best agent](video/output_final.mp4) |
+
+These videos provide a qualitative comparison of movement, survival, combat,
+and level progression. Video length is included only as recording metadata; use
+the evaluation metrics (mean reward, success rate, and episode length) for a
+quantitative model comparison.
 
 ---
 
