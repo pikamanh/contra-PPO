@@ -112,10 +112,16 @@ git clone https://github.com/pikamanh/contra-PPO.git
 cd contra-PPO
 ```
 
+Install uv
+
+```bash
+pip install uv
+```
+
 Create a virtual environment
 
 ```bash
-python -m venv venv
+uv  venv --python 3.10
 ```
 
 Activate it
@@ -135,7 +141,7 @@ source venv/bin/activate
 Install dependencies
 
 ```bash
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ---
